@@ -14,6 +14,16 @@ db = client['timetable_db']
 def home():
     return {"message": "Campus Timetable API is LIVE!"}
 
+@app.get("/version")
+def get_app_version():
+    return {
+        "status": "success",
+        # Change this number whenever you release a new update
+        "latest_version": "1.0", 
+        # Replace this with your actual Google Drive or GitHub Releases link!
+        "download_url": "https://github.com/kaaficlear/AUD-TIMETABLE/releases" 
+    }
+
 @app.get("/schedule")
 def get_full_schedule():
     try:
