@@ -2,6 +2,7 @@ from fastapi import FastAPI, Query
 import pymongo
 from pymongo.server_api import ServerApi
 from datetime import datetime
+from pydantic import BaseModel # --- NEW: Import Pydantic for data validation ---
 
 app = FastAPI()
 
@@ -9,6 +10,11 @@ app = FastAPI()
 uri = "mongodb+srv://priyanshmaurya:mummypapaM@timetable.yramfud.mongodb.net/?authSource=admin&retryWrites=true&w=majority"
 client = pymongo.MongoClient(uri, server_api=ServerApi('1'))
 db = client['timetable_db']
+
+# --- NEW: Define what the incoming User data looks like ---
+class UserAuth(BaseModel):
+    uid: str
+    email: str
 
 @app.get("/")
 def home():
@@ -18,9 +24,7 @@ def home():
 def get_app_version():
     return {
         "status": "success",
-        # Change this number whenever you release a new update
         "latest_version": "1.0", 
-        # Replace this with your actual Google Drive or GitHub Releases link!
         "download_url": "https://github.com/kaaficlear/AUD-TIMETABLE/releases" 
     }
 
@@ -45,8 +49,6 @@ def get_full_schedule():
             {
                 "$addFields": {
                     "course_name": "$course_info.course_name",
-                    # --- NEW: Grab the semester from the joined course data ---
-                    # NOTE: If your courses collection uses 'sem' instead of 'semester', change it here!
                     "semester": "$course_info.semester" 
                 }
             },
@@ -108,3 +110,25 @@ def get_empty_rooms(day: str = Query(...), time: str = Query(...)):
 
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+# --- NEW: The endpoint to catch new user registrations from Flutter ---
+@app.post("/users/sync")
+async def sync_user(user: UserAuth):
+    # Check if the user already exists in your MongoDB 'users' collection
+    existing_user = db.users.find_one({"uid": user.uid})
+    
+    if existing_user:
+        return {
+            "message": "User exists", 
+            "is_premium": existing_user.get("is_premium", False)
+        }
+    
+    # If it is a new user, create their profile
+    new_user = {
+        "uid": user.uid,
+        "email": user.email,
+        "is_premium": False, # Everyone starts on the free tier
+    }
+    
+    db.users.insert_one(new_user)
+    return {"message": "New user registered", "is_premium": False}
