@@ -97,6 +97,8 @@ def get_empty_rooms(day: str = Query(...), time: str = Query(...)):
 
 # --- USER & AUTH ENDPOINTS ---
 
+# --- USER & AUTH ENDPOINTS ---
+
 @app.post("/users/sync")
 async def sync_user(user: UserAuth):
     existing_user = db.users.find_one({"uid": user.uid})
@@ -105,7 +107,9 @@ async def sync_user(user: UserAuth):
             "message": "User exists", 
             "is_premium": existing_user.get("is_premium", False),
             "profile_completed": existing_user.get("profile_completed", False),
-            "university": existing_user.get("university", "") # --- NEW: Sends university to Flutter ---
+            "university": existing_user.get("university", ""),
+            "username": existing_user.get("username", ""), # Sends saved username
+            "profile_pic": existing_user.get("profile_pic", "")
         }
     
     new_user = {
@@ -113,38 +117,40 @@ async def sync_user(user: UserAuth):
         "email": user.email,
         "is_premium": False, 
         "profile_completed": False,
-        "university": "" 
+        "university": "",
+        "username": "",
+        "profile_pic": ""
     }
     db.users.insert_one(new_user)
-    return {"message": "New user registered", "is_premium": False, "profile_completed": False, "university": ""}
-
-# --- NEW: Save Avatar Selection ---
-@app.post("/users/update-avatar")
-def update_avatar(data: AvatarUpdate):
-    db.users.update_one(
-        {"uid": data.uid},
-        {"$set": {"profile_pic": data.profile_pic}}
-    )
-    return {"status": "success"}
+    return {"message": "New user registered", "is_premium": False, "profile_completed": False, "university": "", "username": "", "profile_pic": ""}
 
 @app.get("/users/check-username")
 def check_username(username: str = Query(...)):
-    # Check if username exists (case-insensitive)
-    user = db.users.find_one({"username": {"$regex": f"^{username}$", "$options": "i"}})
-    return {"available": user is None}
+    clean_username = username.strip().lower()
+    if not clean_username:
+        return {"available": False, "message": "Username cannot be empty"}
+        
+    # Case-insensitive search across existing MongoDB users
+    existing_user = db.users.find_one({"username": {"$regex": f"^{clean_username}$", "$options": "i"}})
+    return {"available": existing_user is None}
 
 @app.post("/users/update-profile")
 def update_profile(profile: UserProfileUpdate):
-    # Double check username isn't taken by someone else
-    existing = db.users.find_one({"username": {"$regex": f"^{profile.username}$", "$options": "i"}, "uid": {"$ne": profile.uid}})
+    clean_username = profile.username.strip()
+    
+    # Check if another user already owns this username
+    existing = db.users.find_one({
+        "username": {"$regex": f"^{clean_username}$", "$options": "i"}, 
+        "uid": {"$ne": profile.uid}
+    })
+    
     if existing:
-        return {"status": "error", "message": "Username already taken"}
+        return {"status": "error", "message": "Username already taken by another account"}
 
-    # Save all the new details to MongoDB
     db.users.update_one(
         {"uid": profile.uid},
         {"$set": {
-            "username": profile.username,
+            "username": clean_username,
             "dob": profile.dob,
             "gender": profile.gender,
             "university": profile.university,
@@ -154,7 +160,6 @@ def update_profile(profile: UserProfileUpdate):
         }}
     )
     return {"status": "success"}
-
 @app.post("/users/verify-reset")
 def verify_reset(data: PasswordResetVerify):
     # Find the user in MongoDB by their email
