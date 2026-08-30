@@ -30,6 +30,10 @@ class PasswordResetVerify(BaseModel):
     username: str
     dob: str
 
+class AvatarUpdate(BaseModel):
+    uid: str
+    profile_pic: str
+
 # --- TIMETABLE ENDPOINTS ---
 @app.get("/")
 def home():
@@ -113,6 +117,16 @@ async def sync_user(user: UserAuth):
     }
     db.users.insert_one(new_user)
     return {"message": "New user registered", "is_premium": False, "profile_completed": False, "university": ""}
+
+# --- NEW: Save Avatar Selection ---
+@app.post("/users/update-avatar")
+def update_avatar(data: AvatarUpdate):
+    db.users.update_one(
+        {"uid": data.uid},
+        {"$set": {"profile_pic": data.profile_pic}}
+    )
+    return {"status": "success"}
+
 @app.get("/users/check-username")
 def check_username(username: str = Query(...)):
     # Check if username exists (case-insensitive)
