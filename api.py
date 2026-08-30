@@ -100,18 +100,19 @@ async def sync_user(user: UserAuth):
         return {
             "message": "User exists", 
             "is_premium": existing_user.get("is_premium", False),
-            "profile_completed": existing_user.get("profile_completed", False) # Flag to tell Flutter if they need to see the setup screen
+            "profile_completed": existing_user.get("profile_completed", False),
+            "university": existing_user.get("university", "") # --- NEW: Sends university to Flutter ---
         }
     
     new_user = {
         "uid": user.uid,
         "email": user.email,
         "is_premium": False, 
-        "profile_completed": False 
+        "profile_completed": False,
+        "university": "" 
     }
     db.users.insert_one(new_user)
-    return {"message": "New user registered", "is_premium": False, "profile_completed": False}
-
+    return {"message": "New user registered", "is_premium": False, "profile_completed": False, "university": ""}
 @app.get("/users/check-username")
 def check_username(username: str = Query(...)):
     # Check if username exists (case-insensitive)
