@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-# Connect to your MongoDB cluster
+# Connect to MongoDB cluster
 uri = "mongodb+srv://priyanshmaurya:mummypapaM@timetable.yramfud.mongodb.net/?authSource=admin&retryWrites=true&w=majority"
 client = pymongo.MongoClient(uri, server_api=ServerApi('1'))
 db = client['timetable_db']
@@ -33,6 +33,13 @@ class PasswordResetVerify(BaseModel):
 class AvatarUpdate(BaseModel):
     uid: str
     profile_pic: str
+
+class PremiumUpgradeRequest(BaseModel):
+    uid: str
+    plan: str
+
+class PremiumRestoreRequest(BaseModel):
+    uid: str
 
 # --- TIMETABLE ENDPOINTS ---
 @app.get("/")
@@ -94,11 +101,7 @@ def get_empty_rooms(day: str = Query(...), time: str = Query(...)):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-
 # --- USER & AUTH ENDPOINTS ---
-
-# --- USER & AUTH ENDPOINTS ---
-
 @app.post("/users/sync")
 async def sync_user(user: UserAuth):
     existing_user = db.users.find_one({"uid": user.uid})
@@ -108,7 +111,7 @@ async def sync_user(user: UserAuth):
             "is_premium": existing_user.get("is_premium", False),
             "profile_completed": existing_user.get("profile_completed", False),
             "university": existing_user.get("university", ""),
-            "username": existing_user.get("username", ""), # Sends saved username
+            "username": existing_user.get("username", ""),
             "profile_pic": existing_user.get("profile_pic", "")
         }
     
@@ -130,7 +133,6 @@ def check_username(username: str = Query(...)):
     if not clean_username:
         return {"available": False, "message": "Username cannot be empty"}
         
-    # Case-insensitive search across existing MongoDB users
     existing_user = db.users.find_one({"username": {"$regex": f"^{clean_username}$", "$options": "i"}})
     return {"available": existing_user is None}
 
@@ -138,7 +140,6 @@ def check_username(username: str = Query(...)):
 def update_profile(profile: UserProfileUpdate):
     clean_username = profile.username.strip()
     
-    # Check if another user already owns this username
     existing = db.users.find_one({
         "username": {"$regex": f"^{clean_username}$", "$options": "i"}, 
         "uid": {"$ne": profile.uid}
@@ -160,14 +161,21 @@ def update_profile(profile: UserProfileUpdate):
         }}
     )
     return {"status": "success"}
+
+@app.post("/users/update-avatar")
+def update_avatar(data: AvatarUpdate):
+    db.users.update_one(
+        {"uid": data.uid},
+        {"$set": {"profile_pic": data.profile_pic}}
+    )
+    return {"status": "success"}
+
 @app.post("/users/verify-reset")
 def verify_reset(data: PasswordResetVerify):
-    # Find the user in MongoDB by their email
     user = db.users.find_one({"email": data.email})
     if not user:
         return {"status": "error", "message": "Email not found in database."}
 
-    # Verify Username and DOB match our records
     db_username = user.get("username", "").lower()
     db_dob = user.get("dob", "")
 
@@ -175,3 +183,29 @@ def verify_reset(data: PasswordResetVerify):
         return {"status": "success"}
     else:
         return {"status": "error", "message": "Security details do not match."}
+
+# --- PREMIUM ENDPOINTS ---
+@app.post("/premium/upgrade")
+def upgrade_premium(data: PremiumUpgradeRequest):
+    result = db.users.update_one(
+        {"uid": data.uid},
+        {"$set": {
+            "is_premium": True,
+            "premium_plan": data.plan,
+            "upgraded_at": datetime.utcnow().isoformat()
+        }}
+    )
+    if result.matched_count == 0:
+        return {"status": "error", "message": "User not found."}
+    return {"status": "success", "message": f"Successfully activated {data.plan} plan."}
+
+@app.post("/premium/restore")
+def restore_premium(data: PremiumRestoreRequest):
+    user = db.users.find_one({"uid": data.uid})
+    if user and user.get("is_premium", False):
+        return {
+            "status": "success",
+            "is_premium": True,
+            "plan": user.get("premium_plan", "Semester Pass")
+        }
+    return {"status": "not_found", "is_premium": False}
