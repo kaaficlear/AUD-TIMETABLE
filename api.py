@@ -6,6 +6,8 @@ from pydantic import BaseModel
 import razorpay
 import hmac
 import hashlib
+from fastapi import Query
+from datetime import datetime
 
 app = FastAPI()
 
@@ -63,6 +65,22 @@ class VerifyPaymentRequest(BaseModel):
 @app.get("/") #[cite: 9]
 def home(): #[cite: 9]
     return {"message": "Campus Timetable API is LIVE!"} #[cite: 9]
+
+@app.get("/holidays")
+async def get_holidays(university: str = Query("Dr. B.R. Ambedkar University Delhi")):
+    try:
+        # Fetch holidays collection from MongoDB
+        records = await db.holidays.find(
+            {"university": university},
+            {"_id": 0}  # Exclude Mongo internal ID
+        ).sort("raw_date", 1).to_list(100)
+        
+        return {
+            "status": "success",
+            "data": records
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 @app.get("/version") #[cite: 9]
 def get_app_version(): #[cite: 9]
