@@ -46,6 +46,12 @@ class FriendActionData(BaseModel):
     uid: str
     friend_username: str
 
+# NEW: Model for saving subjects
+class SavedSubjectsData(BaseModel):
+    uid: str
+    saved_subjects: list[str]
+
+
 # --- TIMETABLE ENDPOINTS ---
 @app.get("/")
 def home():
@@ -135,7 +141,8 @@ async def sync_user(user: UserAuth):
         "profile_completed": False,
         "university": "",
         "username": "",
-        "profile_pic": ""
+        "profile_pic": "",
+        "saved_subjects": [] # Default empty subjects
     }
     db.users.insert_one(new_user)
     return {"message": "New user registered", "is_premium": False, "profile_completed": False, "university": "", "username": "", "profile_pic": ""}
@@ -173,6 +180,12 @@ def update_profile(profile: UserProfileUpdate):
 @app.post("/users/update-avatar")
 def update_avatar(data: AvatarUpdate):
     db.users.update_one({"uid": data.uid}, {"$set": {"profile_pic": data.profile_pic}})
+    return {"status": "success"}
+
+# NEW: Saves the user's bookmarked subjects to MongoDB
+@app.post("/users/save-subjects")
+def save_subjects(data: SavedSubjectsData):
+    db.users.update_one({"uid": data.uid}, {"$set": {"saved_subjects": data.saved_subjects}})
     return {"status": "success"}
 
 @app.post("/users/verify-reset")
@@ -242,6 +255,9 @@ def get_friends_list(uid: str = Query(...)):
     friends_cursor = db.friends.find({"user1": my_username}, {"_id": 0})
     rich_friends = []
     
+    # Get the current day (e.g., 'Monday') to see what classes they have today
+    current_day = datetime.now().strftime('%A')
+    
     for f in friends_cursor:
         friend_profile = db.users.find_one({"username": f["user2"]})
         if friend_profile:
@@ -249,12 +265,48 @@ def get_friends_list(uid: str = Query(...)):
             if not avatar:
                 avatar = f"https://api.dicebear.com/7.x/avataaars/png?seed={friend_profile.get('username')}"
             
+            # --- NEW: Fetch the friend's saved classes from MongoDB ---
+            saved_subjects = friend_profile.get("saved_subjects", [])
+            
+            friend_schedule_cursor = db.schedule.aggregate([
+                {"$match": {
+                    "course_code": {"$in": saved_subjects},
+                    "day_of_week": current_day
+                }},
+                {"$lookup": {
+                    "from": "courses",
+                    "localField": "course_code",
+                    "foreignField": "course_code",
+                    "as": "course_info"
+                }},
+                {"$unwind": {"path": "$course_info", "preserveNullAndEmptyArrays": True}},
+                {"$addFields": {"course_name": "$course_info.course_name"}}
+            ])
+            
+            friend_schedule = []
+            for cls in friend_schedule_cursor:
+                time_str = "TBA"
+                if isinstance(cls.get("time_slot"), dict):
+                    time_str = f"{cls['time_slot'].get('start_time', '')} - {cls['time_slot'].get('end_time', '')}"
+                elif isinstance(cls.get("time_slot"), str):
+                    time_str = cls.get("time_slot")
+                    
+                friend_schedule.append({
+                    "course_code": cls.get("course_code", ""),
+                    "course_name": cls.get("course_name", cls.get("course_code", "")),
+                    "time_slot": time_str,
+                    "room_code": cls.get("room_code", "TBA")
+                })
+                
+            is_free = len(friend_schedule) == 0
+            status_text = "Currently: Free" if is_free else "Has classes today"
+
             rich_friends.append({
                 "username": friend_profile.get("username"),
                 "avatar": avatar,
-                "status": "Currently: Free", 
-                "is_free": True,
-                "schedule": []
+                "status": status_text, 
+                "is_free": is_free,
+                "schedule": friend_schedule
             })
     
     return {
