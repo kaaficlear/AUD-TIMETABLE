@@ -3,6 +3,7 @@ import pymongo
 from pymongo.server_api import ServerApi
 from pydantic import BaseModel
 from datetime import datetime
+# Note: I removed the Flask imports here so it doesn't crash your FastAPI server
 
 app = FastAPI()
 
@@ -36,6 +37,16 @@ class AvatarUpdate(BaseModel):
 
 class PremiumRestoreRequest(BaseModel):
     uid: str
+
+# NEW: FastApi Models for the Friends Feature
+class FriendRequestData(BaseModel):
+    from_uid: str
+    from_username: str
+    to_username: str
+
+class FriendActionData(BaseModel):
+    uid: str
+    friend_username: str
 
 # --- TIMETABLE ENDPOINTS ---
 @app.get("/")
@@ -196,8 +207,7 @@ def verify_reset(data: PasswordResetVerify):
     else:
         return {"status": "error", "message": "Security details do not match."}
 
-# --- PREMIUM ENDPOINTS (RAZORPAY REMOVED) ---
-
+# --- PREMIUM ENDPOINTS ---
 @app.post("/premium/restore")
 def restore_premium(data: PremiumRestoreRequest):
     user = db.users.find_one({"uid": data.uid})
@@ -208,3 +218,88 @@ def restore_premium(data: PremiumRestoreRequest):
             "plan": user.get("premium_plan", "Semester Pass")
         }
     return {"status": "not_found", "is_premium": False}
+
+# ==========================================================
+# --- NEW: FASTAPI FRIENDS ENDPOINTS ---
+# ==========================================================
+
+# 1. Send Friend Request
+@app.post("/friends/request")
+def send_request(data: FriendRequestData):
+    # Search the database for the target user (case-insensitive)
+    target_user = db.users.find_one({"username": {"$regex": f"^{data.to_username}$", "$options": "i"}})
+
+    if not target_user:
+        return {"status": "error", "message": "User not found"}
+
+    # Target user exists. Add to their pending requests collection.
+    db.pending_requests.insert_one({
+        "target_uid": target_user.get("uid"),
+        "target_username": target_user.get("username"),
+        "from_uid": data.from_uid,
+        "username": data.from_username,
+        "avatar": f"https://api.dicebear.com/7.x/avataaars/png?seed={data.from_username}"
+    })
+
+    return {"status": "success"}
+
+# 2. Accept Request
+@app.post("/friends/accept")
+def accept_request(data: FriendActionData):
+    # Delete from pending requests
+    db.pending_requests.delete_one({"target_uid": data.uid, "username": data.friend_username})
+    
+    # Get my username to set up the two-way relationship
+    my_user = db.users.find_one({"uid": data.uid})
+    if my_user:
+        my_username = my_user.get("username")
+        # Add to friends list (two-way connection)
+        db.friends.insert_one({"user1": my_username, "user2": data.friend_username})
+        db.friends.insert_one({"user1": data.friend_username, "user2": my_username})
+        
+    return {"status": "success"}
+
+# 3. Decline Request
+@app.post("/friends/decline")
+def decline_request(data: FriendActionData):
+    # Delete from pending requests without adding to friends
+    db.pending_requests.delete_one({"target_uid": data.uid, "username": data.friend_username})
+    return {"status": "success"}
+
+# 4. Fetch Friends List & Pending Requests
+@app.get("/friends/list")
+def get_friends_list(uid: str = Query(...)):
+    user = db.users.find_one({"uid": uid})
+    if not user:
+        return {"status": "error", "message": "User not found"}
+        
+    my_username = user.get("username")
+    
+    # Fetch pending requests targeting this user
+    pending_cursor = db.pending_requests.find({"target_uid": uid}, {"_id": 0})
+    pending = list(pending_cursor)
+    
+    # Fetch accepted friends
+    friends_cursor = db.friends.find({"user1": my_username}, {"_id": 0})
+    rich_friends = []
+    
+    for f in friends_cursor:
+        friend_profile = db.users.find_one({"username": f["user2"]})
+        if friend_profile:
+            avatar = friend_profile.get("profile_pic")
+            if not avatar:
+                avatar = f"https://api.dicebear.com/7.x/avataaars/png?seed={friend_profile.get('username')}"
+            
+            rich_friends.append({
+                "username": friend_profile.get("username"),
+                "avatar": avatar,
+                "status": "Currently: Free", 
+                "is_free": True,
+                "schedule": [] # You can inject the actual schedule list here later
+            })
+    
+    return {
+        "status": "success",
+        "friends": rich_friends,
+        "pending": pending
+    }
