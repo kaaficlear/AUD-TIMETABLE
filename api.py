@@ -3,7 +3,6 @@ import pymongo
 from pymongo.server_api import ServerApi
 from pydantic import BaseModel
 from datetime import datetime
-# Note: I removed the Flask imports here so it doesn't crash your FastAPI server
 
 app = FastAPI()
 
@@ -38,7 +37,6 @@ class AvatarUpdate(BaseModel):
 class PremiumRestoreRequest(BaseModel):
     uid: str
 
-# NEW: FastApi Models for the Friends Feature
 class FriendRequestData(BaseModel):
     from_uid: str
     from_username: str
@@ -56,16 +54,8 @@ def home():
 @app.get("/holidays")
 def get_holidays(university: str = Query("Dr. B.R. Ambedkar University Delhi")):
     try:
-        # Fetch holidays collection from MongoDB synchronously 
-        records = list(db.holidays.find(
-            {"university": university},
-            {"_id": 0}  # Exclude Mongo internal ID
-        ).sort("raw_date", 1))
-        
-        return {
-            "status": "success",
-            "data": records
-        }
+        records = list(db.holidays.find({"university": university}, {"_id": 0}).sort("raw_date", 1))
+        return {"status": "success", "data": records}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -162,12 +152,7 @@ def check_username(username: str = Query(...)):
 @app.post("/users/update-profile")
 def update_profile(profile: UserProfileUpdate):
     clean_username = profile.username.strip()
-    
-    existing = db.users.find_one({
-        "username": {"$regex": f"^{clean_username}$", "$options": "i"},
-        "uid": {"$ne": profile.uid}
-    })
-    
+    existing = db.users.find_one({"username": {"$regex": f"^{clean_username}$", "$options": "i"}, "uid": {"$ne": profile.uid}})
     if existing:
         return {"status": "error", "message": "Username already taken by another account"}
 
@@ -187,10 +172,7 @@ def update_profile(profile: UserProfileUpdate):
 
 @app.post("/users/update-avatar")
 def update_avatar(data: AvatarUpdate):
-    db.users.update_one(
-        {"uid": data.uid},
-        {"$set": {"profile_pic": data.profile_pic}}
-    )
+    db.users.update_one({"uid": data.uid}, {"$set": {"profile_pic": data.profile_pic}})
     return {"status": "success"}
 
 @app.post("/users/verify-reset")
@@ -212,27 +194,16 @@ def verify_reset(data: PasswordResetVerify):
 def restore_premium(data: PremiumRestoreRequest):
     user = db.users.find_one({"uid": data.uid})
     if user and user.get("is_premium", False):
-        return {
-            "status": "success",
-            "is_premium": True,
-            "plan": user.get("premium_plan", "Semester Pass")
-        }
+        return {"status": "success", "is_premium": True, "plan": user.get("premium_plan", "Semester Pass")}
     return {"status": "not_found", "is_premium": False}
 
-# ==========================================================
-# --- NEW: FASTAPI FRIENDS ENDPOINTS ---
-# ==========================================================
-
-# 1. Send Friend Request
+# --- FASTAPI FRIENDS ENDPOINTS ---
 @app.post("/friends/request")
 def send_request(data: FriendRequestData):
-    # Search the database for the target user (case-insensitive)
     target_user = db.users.find_one({"username": {"$regex": f"^{data.to_username}$", "$options": "i"}})
-
     if not target_user:
         return {"status": "error", "message": "User not found"}
 
-    # Target user exists. Add to their pending requests collection.
     db.pending_requests.insert_one({
         "target_uid": target_user.get("uid"),
         "target_username": target_user.get("username"),
@@ -240,33 +211,23 @@ def send_request(data: FriendRequestData):
         "username": data.from_username,
         "avatar": f"https://api.dicebear.com/7.x/avataaars/png?seed={data.from_username}"
     })
-
     return {"status": "success"}
 
-# 2. Accept Request
 @app.post("/friends/accept")
 def accept_request(data: FriendActionData):
-    # Delete from pending requests
     db.pending_requests.delete_one({"target_uid": data.uid, "username": data.friend_username})
-    
-    # Get my username to set up the two-way relationship
     my_user = db.users.find_one({"uid": data.uid})
     if my_user:
         my_username = my_user.get("username")
-        # Add to friends list (two-way connection)
         db.friends.insert_one({"user1": my_username, "user2": data.friend_username})
         db.friends.insert_one({"user1": data.friend_username, "user2": my_username})
-        
     return {"status": "success"}
 
-# 3. Decline Request
 @app.post("/friends/decline")
 def decline_request(data: FriendActionData):
-    # Delete from pending requests without adding to friends
     db.pending_requests.delete_one({"target_uid": data.uid, "username": data.friend_username})
     return {"status": "success"}
 
-# 4. Fetch Friends List & Pending Requests
 @app.get("/friends/list")
 def get_friends_list(uid: str = Query(...)):
     user = db.users.find_one({"uid": uid})
@@ -275,11 +236,9 @@ def get_friends_list(uid: str = Query(...)):
         
     my_username = user.get("username")
     
-    # Fetch pending requests targeting this user
     pending_cursor = db.pending_requests.find({"target_uid": uid}, {"_id": 0})
     pending = list(pending_cursor)
     
-    # Fetch accepted friends
     friends_cursor = db.friends.find({"user1": my_username}, {"_id": 0})
     rich_friends = []
     
@@ -295,7 +254,7 @@ def get_friends_list(uid: str = Query(...)):
                 "avatar": avatar,
                 "status": "Currently: Free", 
                 "is_free": True,
-                "schedule": [] # You can inject the actual schedule list here later
+                "schedule": []
             })
     
     return {
